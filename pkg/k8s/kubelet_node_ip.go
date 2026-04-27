@@ -108,7 +108,7 @@ func EnsureKubeletK8sNodeIP(cmdExec platform.CommandExecutor, k8sNodeIP string) 
 // WaitAllNodesReady runs kubectl wait against the given cluster admin kubeconfig on the executor.
 func WaitAllNodesReady(cmdExec platform.CommandExecutor, timeout time.Duration) error {
 	script := "sudo kubectl --kubeconfig /etc/kubernetes/admin.conf wait --for=condition=Ready nodes --all --timeout=" +
-		fmt.Sprintf("%ds", int(timeout.Round(time.Second)/time.Second))
+		fmt.Sprintf("%ds", int(timeout.Round(time.Second).Seconds()))
 	stdout, stderr, err := cmdExec.ExecuteWithTimeout(script, timeout+30*time.Second)
 	if err != nil {
 		return fmt.Errorf("kubectl wait nodes: %w\nstdout: %s\nstderr: %s", err, strings.TrimSpace(stdout), strings.TrimSpace(stderr))
