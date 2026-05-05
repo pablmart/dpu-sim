@@ -2,10 +2,10 @@
 
 This project automates the deployment of DPU simulation environments using either **VMs (libvirt)** or **containers (Kind)**, pre-configured with Kubernetes and OVN-Kubernetes (or other CNIs) for container networking experiments/development/CI/CD.
 
-DPUs are being used in data centers to accelerate different workloads such as AI (Artificial Intelligence), NFs (Network Functions) and many use cases. This DPU simulation's goal is to bring the DPU into developer's hands without needing the hardware. DPU hardware has limitations such as ease of provisioning, hardware availability, cost, embedded CPU capacity, and others, the DPU simulation tools here using Virtual Machines or Containers should lower the barrier of entry to move fast in developing features in Kubernetes, CNIs, APIs, etc... The second objective is to use this simulation in upstream CI/CD for CNIs that support offloading to DPUs such as OVN-Kubernetes
+DPUs are being used in data centers to accelerate different workloads such as AI (Artificial Intelligence), NFs (Network Functions) and many use cases. This DPU simulation's goal is to bring the DPU into developer's hands without needing the hardware. DPU hardware has limitations such as ease of provisioning, hardware availability, cost, embedded CPU capacity, and others, the DPU simulation tools here using Virtual Machines or Containers should lower the barrier of entry to move fast in developing features in Kubernetes, CNIs, APIs, etc... The second objective is to use this simulation in upstream CI/CD for CNIs that support offloading to DPUs such as OVN-Kubernetes.
 
 These are the list of DPUs that this simulation will try to emulate:
-- NVIDIA BlueField 3
+- NVIDIA BlueField 3 (Currently supports OVN-Kubernetes DPU offload)
 - Marvell Octeon 10
 - Intel NetSec Accelerator
 - Intel IPU
@@ -13,7 +13,7 @@ These are the list of DPUs that this simulation will try to emulate:
 All these DPUs have common simularities, some we can emulate better than others. As this DPU simulation project grows there would a increased interest and need to simulate the hardware closely (e.g. eSwitch) in QEMU drivers.
 
 ## Status: 🚧 Active Development
- - `dpu-sim` is functional for VM & Kind mode.
+ - `dpu-sim` is functional for VM & Kind mode supporting OVN-Kubernetes DPU offload.
  - `vmctl` is functional for managing VMs created by dpu-sim.
 
 ## Features
@@ -1781,6 +1781,15 @@ sudo ovs-vsctl add-port br0 eth1
                                          └────────┬─────────┘
                                                   │
                                                   ▼
+                                         ┌──────────────────┐
+                                         │ Optional: local  │
+                                         │ registry setup   │
+                                         │ (if enabled: CNI │
+                                         │  images, device  │
+                                         │  plugin)         │
+                                         └────────┬─────────┘
+                                                  │
+                                                  ▼
                                     ┌─────────────┴─────────────┐
                                     │    Deployment Mode?       │
                                     └─────────────┬─────────────┘
@@ -1788,24 +1797,35 @@ sudo ovs-vsctl add-port br0 eth1
                         ┌─────────────────────────┼─────────────────────────┐
                         │ VM Mode                 │                         │ Kind Mode
                         ▼                         │                         ▼
-           ┌────────────────────────┐             │            ┌────────────────────────┐
-           │    NewVMManager()      │             │            │   NewKindManager()     │
-           │  (connect to libvirt)  │             │            │   (Kind provider)      │
-           └───────────┬────────────┘             │            └───────────┬────────────┘
-                       │                          │                        │
-                       ▼                          │                        ▼
-           ┌────────────────────────┐             │            ┌────────────────────────┐
-           │    CleanupAll()        │             │            │    CleanupAll()        │
-           │  (VMs, Networks, Disks)│             │            │  (Delete Kind clusters)│
-           └───────────┬────────────┘             │            └───────────┬────────────┘
+           ┌──────────────────────────────────┐   │            ┌────────────────────────┐
+           │ EnsureHostNetworkPrerequisites() │   │            │   NewKindManager()     │
+           │ (libvirt / OVS host)             │   │            │   (Kind provider)      │
+           └───────────┬──────────────────────┘   │            └───────────┬────────────┘
+                       ▼                          │                        │
+           ┌────────────────────────┐             │                        ▼
+           │    NewVMManager()      │             │            ┌────────────────────────┐
+           │  (connect to libvirt)  │             │            │    CleanupAll()        │
+           └───────────┬────────────┘             │            │  (Delete Kind clusters)│
+                       │                          │            └───────────┬────────────┘
+                       ▼                          │                        │
+           ┌────────────────────────┐             │                        │
+           │    CleanupAll()        │             │                        │
+           │  (VMs, Networks, Disks)│             │                        │
+           └───────────┬────────────┘             │                        │
                        │                          │                        │
 ═══════════════════════╪══════════════════════════╪════════════════════════╪═══════════════════════════════════════
                        │  PHASE 1: INFRASTRUCTURE │                        │  PHASE 1: CLUSTER CREATION
 ═══════════════════════╪══════════════════════════╪════════════════════════╪═══════════════════════════════════════
                        ▼                          │                        ▼
-           ┌────────────────────────┐             │            ┌────────────────────────┐
-           │  CreateAllNetworks()   │             │            │  DeployAllClusters()   │
-           └───────────┬────────────┘             │            └───────────┬────────────┘
+           ┌────────────────────────┐             │            ┌──────────────────────────┐
+           │  CreateAllNetworks()   │             │            │ InstallHostDeps (Kind)   │
+           └───────────┬────────────┘             │            │ (inotify, br_netfilter)  │
+                       │                          │            │ (if Flannel / Multus)    │
+                       │                          │            └───────────┬──────────────┘
+                       │                          │                        ▼
+                       │                          │            ┌────────────────────────┐
+                       │                          │            │  DeployAllClusters()   │
+                       │                          │            └───────────┬────────────┘
                        │                          │                        │
               ┌────────┴────────┐                 │                        │ (for each cluster)
               ▼                 ▼                 │                        ▼
@@ -1826,10 +1846,11 @@ sudo ovs-vsctl add-port br0 eth1
                        ▼                          │            └───────────┬────────────┘
            ┌────────────────────────┐             │                        │
            │    CreateAllVMs()      │             │                        ▼
-           └───────────┬────────────┘             │            ┌────────────────────────┐
-                       │                          │            │   GetKubeconfig()      │
-                       │ (for each VM)            │            │   Save to file         │
-                       ▼                          │            └───────────┬────────────┘
+           └───────────┬────────────┘             │            ┌────────────────────────────────┐
+                       │                          │            │   GetKubeconfig()              │
+                       │ (for each VM)            │            │   Save to file                 │
+                       │                          │            │ (+ add img registry Kind net)  │
+                       ▼                          │            └───────────┬────────────────────┘
            ┌────────────────────────┐             │                        │
            │ CreateVMDisk()         │             │                        ▼
            │ (qemu-img, qcow2)      │             │            ┌────────────────────────┐
@@ -1848,12 +1869,12 @@ sudo ovs-vsctl add-port br0 eth1
            │    dpu)                │             │                        │
            └───────────┬────────────┘             │                        │
                        │                          │                        │
-                       ▼                          │                        │
-           ┌────────────────────────┐             │                        │
-           │ DomainDefineXML()      │             │                        │
-           │ SetAutostart()         │             │                        │
-           │ domain.Create()        │◀─── Start  │                        │
-           └───────────┬────────────┘     QEMU    │                        │
+                       ▼                          │                        ▼
+           ┌────────────────────────┐             │            ┌────────────────────────┐
+           │ DomainDefineXML()      │             │            │ SetupHostToDpuNetwork()│
+           │ SetAutostart()         │             │            │ (HostToDpu cfg, veth   │
+           │ domain.Create()        │◀─── Start  │            │  host...DPU containers)│
+           └───────────┬────────────┘     QEMU    │            └───────────┬────────────┘
                        │                          │                        │
                        ▼                          │                        │
            ┌────────────────────────┐             │                        │
@@ -1861,55 +1882,70 @@ sudo ovs-vsctl add-port br0 eth1
            │   (DHCP lease, 5min)   │             │                        │
            │   WaitForSSH()         │             │                        │
            │   (SSH ready, 5min)    │             │                        │
+           │   cloud-init status    │             │                        │
+           │     --wait (per VM)    │             │                        │
+           └───────────┬────────────┘             │                        │
+                       ▼                          │                        │
+           ┌────────────────────────┐             │                        │
+           │ AssignDpuHostGatewayIPs│             │                        │
+           │ (if offload DPU Host:  │             │                        │
+           │  gw on eth0-0, etc.)   │             │                        │
            └───────────┬────────────┘             │                        │
                        │                          │                        │
 ═══════════════════════╪══════════════════════════╪════════════════════════╪═══════════════════════════════════════
-                       │   PHASE 2: KUBERNETES    │                        │   PHASE 2: CNI INSTALLATION
+                       │  PHASE 2: K8s + CNI      │                        │  PHASE 2: K8s + CNI
 ═══════════════════════╪══════════════════════════╪════════════════════════╪═══════════════════════════════════════
                        ▼                          │                        ▼
            ┌────────────────────────┐             │            ┌────────────────────────┐
-           │ InstallKubernetes()    │             │            │    InstallCNI()        │
-           │ (on each VM via SSH)   │             │            │ (for each cluster)     │
-           │ - containerd           │             │            └───────────┬────────────┘
-           │ - kubeadm, kubelet     │             │                        │
-           │ - kubectl              │             │               ┌────────┴────────┐
-           └───────────┬────────────┘             │               │                 │
-                       │                          │               ▼                 ▼
-                       ▼                          │     ┌─────────────────┐  ┌─────────────────┐
-           ┌────────────────────────┐             │     │ OVN-Kubernetes? │  │ Other CNI       │
-           │ SetupAllK8sClusters()  │             │     │ Yes             │  │ (Flannel, etc.) │
-           │ kubeadm init           │             │     └────────┬────────┘  └────────┬────────┘
-           └───────────┬────────────┘             │              │                    │
-                       │                          │              ▼                    │
-                       ▼                          │     ┌─────────────────┐           │
-           ┌────────────────────────┐             |     │PullAndLoadImage │           │
-           │ Save Kubeconfig        │             │     │(docker pull +   │           │
-           └───────────┬────────────┘             │     │ kind load)      │           │
-                       │                          │     └────────┬────────┘           │
-                       ▼                          │              │                    │
-           ┌────────────────────────┐             │              └─────────┬──────────┘
-           │ cniMgr.InstallCNI()    │             │                        │
-           │ - Helm Install         │             │                        ▼
-           │ - Wait for pods ready  │             │            ┌────────────────────────┐
-           │ - Delete kube-proxy    │             │            │ GetInternalAPIServerIP │
-           │   (if OVN-K8s)         │             │            │ (docker inspect)       │
-           └───────────┬────────────┘             │            └───────────┬────────────┘
-                       │                          │                        │
+           │ InstallKubernetes()    │             │            │ (Optional) Build/load  │
+           │ (on each VM via SSH)   │             │            │ registry-only images   │
+           │ - containerd           │             │            │ into Kind (see config) │
+           │ - kubeadm, kubelet     │             │            └───────────┬────────────┘
+           │ - kubectl              │             │                        │
+           └───────────┬────────────┘             │                        ▼
+                       │                          │            ┌────────────────────────┐
+                       ▼                          │            │    InstallCNI()        │
+           ┌───────────────────────────┐          │            │ (per cluster, ordered) │
+           │ SetupAllK8sClusters()     │          │            └───────────┬────────────┘
+           │ • kubeadm init + save     │          │                        │
+           │   kubeconfig (1st CP)     │          │                        │
+           │ • join CP / workers       │          │               ┌────────┴────────┐
+           │ • kubelet --node-ip from  │          │               ▼                 ▼
+           │   k8s_node_ip (OVN)       │          │     ┌─────────────────┐  ┌─────────────────┐
+           │ • DPU OVS prep if req.    │          │     │ OVN-Kubernetes? │  │ Other CNI       │
+           └───────────┬───────────────┘          │     │ (+ DPU offload) │  │ (Flannel, etc.) │
+                       │                          │     └────────┬────────┘  └────────┬────────┘
+               ┌───────┴────────┐                 │              │                    │
+               ▼                ▼                 │              ▼                    │
+     ┌─────────────────┐ ┌─────────────────┐      │     ┌─────────────────┐           │
+     │ OVN-Kubernetes? │ │ Other CNI       │      │     │PullAndLoadImage │           │
+     │ (+ DPU offload) │ │ (Flannel, etc.) │      │     │+ DPU OVS cfg in │           │
+     └────────┬────────┘ └──────┬──────────┘      │     │ Kind if offload │           │
+              │                 │                 │     └────────┬────────┘           │
+              └────────┬────────┘                 │              │                    │
+                       ▼                          │              └─────────┬──────────┘
            ┌────────────────────────┐             │                        ▼
-           │ Join other masters &   │             │            ┌────────────────────────┐
-           │ workers via kubeadm    │             │            │ cniMgr.InstallCNI()    │
-           └───────────┬────────────┘             │            │ - Helm Install         │
-                       │                          │            │ - Wait for pods ready  │
-                       │                          │            │ - Delete kube-proxy    │
-                       │                          │            │   (if OVN-K8s)         │
-                       |                          │            └───────────┬────────────┘
-                       |                          │                        │
+           │ cniMgr.InstallCNI()    │             │            ┌────────────────────────┐
+           │ (Helm from host; cfg)  │             │            │ GetInternalAPIServerIP │
+           │  from cluster CNI type │             │            │ (docker inspect)       │
+           └───────────┬────────────┘             │            └───────────┬────────────┘
+                       │                          │                        ▼
+                       ▼                          │            ┌────────────────────────┐
+           ┌────────────────────────┐             │            │ cniMgr.InstallCNI()    │
+           │ InstallAddons()        │             │            │ (same Helm path as VM) │
+           │ PostInstallPerCluster()│             │            └───────────┬────────────┘
+           │ cni.PostInstall()      │             │                        ▼
+           │ (after all clusters)   │             │            ┌────────────────────────┐
+           └───────────┬────────────┘             │            │ InstallAddons()        │
+                       │                          │            │ PostInstallPerCluster()│
+                       │                          │            │ cni.PostInstall()      │
+                       │                          │            └───────────┬────────────┘
                        │                          │                        │
 ═══════════════════════╪══════════════════════════╪════════════════════════╪═══════════════════════════════════════
                        │                          │                        │
                        ▼                          │                        ▼
            ┌────────────────────────┐             │            ┌────────────────────────┐
-           │  ✓ VM Deployment       │            │            │  ✓ Kind Deployment     │
+           │  VM Deployment         │             │            │  Kind Deployment       │
            │    Complete!           │             │            │    Complete!           │
            │                        │             │            │                        │
            │  • VMs running         │             │            │  • Clusters running    │
