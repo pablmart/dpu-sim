@@ -3,8 +3,8 @@ package ssh
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/ovn-kubernetes/dpu-simulator/pkg/config"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewClient(t *testing.T) {
