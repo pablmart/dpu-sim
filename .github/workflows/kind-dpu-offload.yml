@@ -18,13 +18,13 @@ jobs:
       - name: Checkout dpu-simulator
         uses: actions/checkout@v4
 
-      # CI depends on https://github.com/ovn-org/ovn-kubernetes/pull/6270 until it lands on master.
-      # After merge: replace ref with `master` (or drop this step and rely on dpu-sim auto-clone).
-      - name: Checkout OVN-Kubernetes (PR 6270)
+      # CI depends on https://github.com/ovn-org/ovn-kubernetes/pull/6270
+      # This can be dropped with dpu-sim auto-clone of OVN-Kubernetes.
+      - name: Checkout OVN-Kubernetes (master)
         uses: actions/checkout@v4
         with:
           repository: ovn-org/ovn-kubernetes
-          ref: refs/pull/6270/head
+          ref: master
           path: ovn-kubernetes
 
       - name: Set up Go
