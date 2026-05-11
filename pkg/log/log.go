@@ -107,10 +107,10 @@ func (l *Logger) SetOutput(w io.Writer) {
 
 // log writes a message if the message level is >= the logger's level
 func (l *Logger) log(level Level, format string, args ...interface{}) {
-	l.mu.RLock()
+	l.mu.Lock()
 	currentLevel := l.level
 	output := l.output
-	l.mu.RUnlock()
+	defer l.mu.Unlock()
 
 	if level > currentLevel {
 		return
